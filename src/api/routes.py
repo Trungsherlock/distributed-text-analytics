@@ -1,22 +1,25 @@
 # src/api/routes.py
 
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 import os
 import json
 from typing import Dict, List
 import threading
 import queue
+from pathlib import Path
 
 # Import our modules
-from ingestion.parser import DocumentParser
-from ingestion.preprocessor import TextPreprocessor
-from analytics.ngram_extractor import NgramExtractor
-from analytics.tfidf_engine import SparkTFIDFEngine
-from clustering.kmeans_cluster import SparkKMeansClustering
-from clustering.cluster_metadata import ClusterMetadataGenerator
+from src.ingestion.parser import DocumentParser
+from src.ingestion.preprocessor import TextPreprocessor
+from src.analytics.ngram_extractor import NgramExtractor
+from src.analytics.tfidf_engine import SparkTFIDFEngine
+from src.clustering.kmeans_cluster import SparkKMeansClustering
+from src.clustering.cluster_metadata import ClusterMetadataGenerator
 
-app = Flask(__name__)
+UI_DIR = Path(__file__).resolve().parents[1] / "ui"
+
+app = Flask(__name__, template_folder=str(UI_DIR))
 app.config['UPLOAD_FOLDER'] = 'data/raw'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 
@@ -37,6 +40,16 @@ processing_queue = queue.Queue()
 def index():
     """Main dashboard page"""
     return render_template('index.html')
+
+@app.route('/scripts/<path:filename>')
+def ui_scripts(filename):
+    """Serve UI JavaScript assets"""
+    return send_from_directory(str(UI_DIR / "scripts"), filename)
+
+@app.route('/styles/<path:filename>')
+def ui_styles(filename):
+    """Serve UI CSS assets"""
+    return send_from_directory(str(UI_DIR / "styles"), filename)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_documents():

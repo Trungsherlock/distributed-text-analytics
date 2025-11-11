@@ -8,13 +8,20 @@ RAW_DIR = "data/raw/"
 OUT_FILE = "data/cleaned/corpus.jsonl"
 
 def process_documents():
+    os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
-    files = [os.path.join(RAW_DIR, f) for f in os.listdir(RAW_DIR)
-             if f.lower().endswith(('.pdf', '.docx', '.txt'))]
+    files = []
+    valid_ext = ('.pdf', '.docx', '.txt', '.json')
+    for root, _, filenames in os.walk(RAW_DIR):
+        for filename in filenames:
+            if filename.lower().endswith(valid_ext):
+                files.append(os.path.join(root, filename))
 
     if not files:
         print(f"[INFO] No files found in {RAW_DIR}. Add some documents first.")
         return
+    
+    print(f"[INFO] Found {len(files)} files to process.\n")
 
     with open(OUT_FILE, "w", encoding="utf-8") as out:
         for path in files:
