@@ -263,11 +263,13 @@ def get_statistics():
     """
     accuracy_report = parser.get_accuracy_report()
     
+    avg_time = accuracy_report.get('avg_time_per_doc') or accuracy_report.get('stats', {}).get('avg_processing_time', 0)
+    
     stats = {
         'total_documents': len(document_store),
         'clusters_created': len(cluster_data.get('clusters', {})),
         'parsing_accuracy': accuracy_report['accuracy'],
-        'avg_processing_time': accuracy_report['avg_time_per_doc'],
+        'avg_processing_time': avg_time,
         'silhouette_score': cluster_data.get('silhouette_score', 0),
         'formats': {}
     }

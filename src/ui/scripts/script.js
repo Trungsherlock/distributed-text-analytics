@@ -65,7 +65,15 @@ async function handleFiles(files) {
 
 // Perform clustering
 async function performClustering() {
+    const statusPill = document.getElementById('clusterStatus');
+    const statusText = document.getElementById('clusterStatusText');
+    
     try {
+        if (statusPill) {
+            statusText.textContent = 'Generating clusters…';
+            statusPill.hidden = false;
+        }
+        
         const response = await fetch('/api/cluster', {
             method: 'POST'
         });
@@ -74,12 +82,18 @@ async function performClustering() {
             clusterData = await response.json();
             displayClusters();
             updateStatistics();
+            if (statusPill) {
+                statusText.textContent = 'Clusters updated';
+                setTimeout(() => statusPill.hidden = true, 2000);
+            }
         } else {
             const error = await response.json();
             alert('Clustering failed: ' + error.error);
+            if (statusPill) statusPill.hidden = true;
         }
     } catch (error) {
         alert('Error: ' + error.message);
+        if (statusPill) statusPill.hidden = true;
     }
 }
 
@@ -87,19 +101,26 @@ async function performClustering() {
 function displayClusters() {
     const clusterList = document.getElementById('clusterList');
     
-    if (!clusterData || !clusterData.clusters) {
+    if (!clusterData || !clusterData.clusters || Object.keys(clusterData.clusters).length === 0) {
+        clusterList.innerHTML = `
+            <div class="empty-state">
+                <p class="empty-icon">🗂️</p>
+                <p class="empty-title">No clusters yet</p>
+                <p class="empty-text">Upload documents and run clustering to create smart collections automatically.</p>
+            </div>
+        `;
         return;
     }
     
     let html = '';
     for (let clusterId in clusterData.clusters) {
         const cluster = clusterData.clusters[clusterId];
+        const topTerms = cluster.top_terms.slice(0, 3).map(t => t[0]).join(', ');
         html += `
             <div class="cluster-item" onclick="showClusterDetails(${clusterId})">
                 <div class="cluster-label">📁 ${cluster.label}</div>
                 <div class="cluster-info">
-                    ${cluster.size} documents | 
-                    Top terms: ${cluster.top_terms.slice(0, 3).map(t => t[0]).join(', ')}
+                    ${cluster.size} documents • ${topTerms || 'No terms yet'}
                 </div>
             </div>
         `;
@@ -162,6 +183,7 @@ async function updateStatistics() {
             Math.round(stats.parsing_accuracy) + '%';
         document.getElementById('avgTime').textContent = 
             stats.avg_processing_time.toFixed(1) + 's';
+        document.getElementById('toolbarDocCount').textContent = stats.total_documents;
         
     } catch (error) {
         console.error('Error updating statistics:', error);

@@ -22,7 +22,7 @@ python -m src.main
 python src.api.routes.py
 
 # 7. Access the UI
-# Open browser to http://localhost:5000
+# Open browser to http://127.0.0.1:5000
 
 # 8. Run tests
 python test_milestone.py
