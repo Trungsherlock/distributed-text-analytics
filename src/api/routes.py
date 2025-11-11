@@ -115,12 +115,14 @@ def process_documents_batch():
             
             # Store document
             doc_id = len(document_store)
+            original_text = result.get('text', '')
             document_data = {
                 'id': doc_id,
                 'file_name': result['file_name'],
                 'format': result['format'],
                 'text': processed_text,
-                'original_text': result['text'][:500],  # Store snippet
+                'original_text': original_text,
+                'preview_text': original_text[:500],
                 'ngrams': top_ngrams,
                 'metadata': result['metadata'],
                 'word_count': result['word_count']
@@ -220,15 +222,16 @@ def get_cluster_details(cluster_id):
     cluster_info = cluster_data['clusters'][cluster_id]
     
     # Add document details
-    cluster_documents = [
-        {
+    cluster_documents = []
+    for idx in cluster_info['document_indices']:
+        doc = document_store[idx]
+        preview_source = doc.get('preview_text') or doc.get('original_text', '')
+        cluster_documents.append({
             'id': idx,
-            'file_name': document_store[idx]['file_name'],
-            'format': document_store[idx]['format'],
-            'preview': document_store[idx]['original_text'][:200] + '...'
-        }
-        for idx in cluster_info['document_indices']
-    ]
+            'file_name': doc['file_name'],
+            'format': doc['format'],
+            'preview': (preview_source[:200] + '...') if preview_source else ''
+        })
     
     response = {
         **cluster_info,
@@ -251,7 +254,10 @@ def get_document(doc_id):
         'file_name': doc['file_name'],
         'format': doc['format'],
         'word_count': doc['word_count'],
-        'preview': doc['original_text'],
+        'preview': doc.get('preview_text') or doc.get('original_text', '')[:500],
+        'clean_text': doc.get('text', ''),
+        'original_text': doc.get('original_text', ''),
+        'metadata': doc.get('metadata', {}),
         'top_unigrams': doc['ngrams'].get(1, [])[:10] if 1 in doc['ngrams'] else [],
         'top_bigrams': doc['ngrams'].get(2, [])[:10] if 2 in doc['ngrams'] else []
     })

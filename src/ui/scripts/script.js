@@ -1,6 +1,8 @@
 // Global variables
 let uploadedFiles = [];
 let clusterData = null;
+let currentDocCount = 0;
+let selectedClusterId = null;
 
 // Setup drag and drop
 const uploadArea = document.getElementById('uploadArea');
@@ -67,11 +69,22 @@ async function handleFiles(files) {
 async function performClustering() {
     const statusPill = document.getElementById('clusterStatus');
     const statusText = document.getElementById('clusterStatusText');
+    const spinner = statusPill ? statusPill.querySelector('.spinner') : null;
+    
+    if (currentDocCount === 0) {
+        alert('Upload at least one document before generating clusters.');
+        return;
+    }
     
     try {
         if (statusPill) {
             statusText.textContent = 'Generating clusters…';
             statusPill.hidden = false;
+            if (spinner) {
+                spinner.style.opacity = '1';
+                spinner.style.transform = 'scale(1)';
+            }
+            statusPill.style.padding = '8px 14px';
         }
         
         const response = await fetch('/api/cluster', {
@@ -80,20 +93,40 @@ async function performClustering() {
         
         if (response.ok) {
             clusterData = await response.json();
+            selectedClusterId = null;
             displayClusters();
             updateStatistics();
+            renderLabelVisualizer();
+            renderDocumentPreview();
             if (statusPill) {
+                if (spinner) {
+                    spinner.style.opacity = '0';
+                    spinner.style.transform = 'scale(0.6)';
+                }
                 statusText.textContent = 'Clusters updated';
+                statusPill.style.padding = '8px 18px';
                 setTimeout(() => statusPill.hidden = true, 2000);
             }
         } else {
             const error = await response.json();
             alert('Clustering failed: ' + error.error);
-            if (statusPill) statusPill.hidden = true;
+            if (statusPill) {
+                if (spinner) {
+                    spinner.style.opacity = '0';
+                    spinner.style.transform = 'scale(0.6)';
+                }
+                statusPill.hidden = true;
+            }
         }
     } catch (error) {
         alert('Error: ' + error.message);
-        if (statusPill) statusPill.hidden = true;
+        if (statusPill) {
+            if (spinner) {
+                spinner.style.opacity = '0';
+                spinner.style.transform = 'scale(0.6)';
+            }
+            statusPill.hidden = true;
+        }
     }
 }
 
@@ -115,10 +148,11 @@ function displayClusters() {
     let html = '';
     for (let clusterId in clusterData.clusters) {
         const cluster = clusterData.clusters[clusterId];
-        const topTerms = cluster.top_terms.slice(0, 3).map(t => t[0]).join(', ');
+        const isActive = parseInt(clusterId, 10) === selectedClusterId;
+        const topTerms = cluster.top_terms.slice(0, 3).map(t => sanitizeText(t[0])).join(', ');
         html += `
-            <div class="cluster-item" onclick="showClusterDetails(${clusterId})">
-                <div class="cluster-label">📁 ${cluster.label}</div>
+            <div class="cluster-item ${isActive ? 'active' : ''}" onclick="showClusterDetails(${clusterId})">
+                <div class="cluster-label">📁 ${sanitizeText(cluster.label)}</div>
                 <div class="cluster-info">
                     ${cluster.size} documents • ${topTerms || 'No terms yet'}
                 </div>
@@ -127,39 +161,19 @@ function displayClusters() {
     }
     
     clusterList.innerHTML = html;
+    renderLabelVisualizer();
 }
 
 // Show cluster details
 async function showClusterDetails(clusterId) {
     try {
+        selectedClusterId = clusterId;
+        displayClusters();
         const response = await fetch(`/api/cluster/${clusterId}`);
         const cluster = await response.json();
         
-        let html = `
-            <h2>${cluster.label}</h2>
-            <p><strong>Documents:</strong> ${cluster.size}</p>
-            <p><strong>Average Length:</strong> ${Math.round(cluster.average_doc_length)} words</p>
-            
-            <h3>Top Terms</h3>
-            <ul>
-                ${cluster.top_terms.map(t => 
-                    `<li>${t[0]} (score: ${t[1].toFixed(3)})</li>`
-                ).join('')}
-            </ul>
-            
-            <h3>Documents in Cluster</h3>
-            <div style="max-height: 300px; overflow-y: auto;">
-                ${cluster.documents.map(doc => `
-                    <div style="background: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 5px;">
-                        <strong>${doc.file_name}</strong> (${doc.format})<br>
-                        <small>${doc.preview}</small>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-        
-        document.getElementById('modalContent').innerHTML = html;
-        document.getElementById('clusterModal').style.display = 'flex';
+        renderLabelVisualizer(cluster);
+        renderDocumentPreview(cluster);
         
     } catch (error) {
         alert('Error loading cluster details: ' + error.message);
@@ -169,6 +183,7 @@ async function showClusterDetails(clusterId) {
 // Close modal
 function closeModal() {
     document.getElementById('clusterModal').style.display = 'none';
+    document.getElementById('modalContent').innerHTML = '';
 }
 
 // Update statistics
@@ -184,6 +199,7 @@ async function updateStatistics() {
         document.getElementById('avgTime').textContent = 
             stats.avg_processing_time.toFixed(1) + 's';
         document.getElementById('toolbarDocCount').textContent = stats.total_documents;
+        currentDocCount = stats.total_documents;
         
     } catch (error) {
         console.error('Error updating statistics:', error);
@@ -193,3 +209,124 @@ async function updateStatistics() {
 // Initial load
 updateStatistics();
 setInterval(updateStatistics, 5000);  // Update every 5 seconds
+
+function renderLabelVisualizer(cluster = null) {
+    const container = document.getElementById('labelVisualizer');
+    
+    if (!cluster && (!clusterData || !clusterData.clusters || Object.keys(clusterData.clusters).length === 0)) {
+        container.innerHTML = `
+            <div class="empty-state mini">
+                <p class="empty-title">No clusters yet</p>
+                <p class="empty-text">Run clustering to explore key labels and terms.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const terms = cluster 
+        ? cluster.top_terms
+        : Object.values(clusterData.clusters).flatMap(c => c.top_terms.slice(0, 1));
+    
+    if (!terms.length) {
+        container.innerHTML = `
+            <div class="empty-state mini">
+                <p class="empty-title">No labels available</p>
+                <p class="empty-text">Upload more documents to enrich cluster labels.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = terms
+        .slice(0, 12)
+        .map(term => `<span class="label-chip">${sanitizeText(term[0])}</span>`)
+        .join('');
+}
+
+function renderDocumentPreview(cluster = null) {
+    const panel = document.getElementById('documentPreview');
+    
+    if (!cluster) {
+        panel.innerHTML = `
+            <div class="empty-state mini">
+                <p class="empty-icon">📄</p>
+                <p class="empty-title">Select a cluster</p>
+                <p class="empty-text">Choose a smart collection to see representative documents.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const docs = cluster.documents.slice(0, 4);
+    const topTerms = cluster.top_terms.slice(0, 3).map(t => sanitizeText(t[0])).join(', ');
+    
+    panel.innerHTML = `
+        <div class="preview-header">
+            <div>
+                <p class="section-label">Selected Cluster</p>
+                <h3>${sanitizeText(cluster.label)}</h3>
+            </div>
+            <span class="preview-badge">${cluster.size} docs</span>
+        </div>
+        <p class="preview-summary">Top terms: ${topTerms || 'N/A'} • Avg length ${Math.round(cluster.average_doc_length)} words</p>
+        <div class="preview-list">
+            ${docs.map(doc => `
+                <div class="doc-preview-item">
+                    <div class="doc-preview-header">
+                        <span>${sanitizeText(doc.file_name)}</span>
+                        <span class="doc-preview-meta">${sanitizeText(doc.format)}</span>
+                    </div>
+                    <p class="doc-preview-text">${sanitizeText(doc.preview)}</p>
+                    <div class="doc-preview-actions">
+                        <button class="doc-preview-btn" onclick="openDocument(${doc.id})">View full document</button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function sanitizeText(text = '') {
+    if (text === null || text === undefined) {
+        return '';
+    }
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+async function openDocument(docId) {
+    const modal = document.getElementById('clusterModal');
+    const modalContent = document.getElementById('modalContent');
+    modal.style.display = 'flex';
+    modalContent.innerHTML = '<p class="full-doc-loading">Loading document…</p>';
+    
+    try {
+        const response = await fetch(`/api/documents/${docId}`);
+        if (!response.ok) {
+            throw new Error('Document not found');
+        }
+        const doc = await response.json();
+        const fullText = doc.original_text || doc.clean_text || 'No text available.';
+        const tokens = doc.top_unigrams.slice(0, 5).map(t => `<span class="label-chip">${sanitizeText(t[0])}</span>`).join('');
+        const formatLabel = doc.format ? doc.format.toUpperCase() : '';
+        
+        modalContent.innerHTML = `
+            <div class="full-doc-header">
+                <div>
+                    <h2>${sanitizeText(doc.file_name)}</h2>
+                    <p class="full-doc-meta">${sanitizeText(formatLabel)} • ${doc.word_count} words</p>
+                </div>
+                <div class="full-doc-tokens">
+                    ${tokens || ''}
+                </div>
+            </div>
+            <div class="full-doc-body">
+                ${sanitizeText(fullText).replace(/\n/g, '<br><br>')}
+            </div>
+        `;
+    } catch (error) {
+        modalContent.innerHTML = `<p class="full-doc-error">Unable to load document: ${error.message}</p>`;
+    }
+}
