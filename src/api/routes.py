@@ -8,6 +8,13 @@ from typing import Dict, List
 import threading
 import queue
 
+# add project root to sys.path for easier imports
+import os, sys
+
+# add .../src to sys.path
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
+
 # Import our modules
 from ingestion.parser import DocumentParser
 from ingestion.preprocessor import TextPreprocessor
@@ -16,7 +23,16 @@ from analytics.tfidf_engine import SparkTFIDFEngine
 from clustering.kmeans_cluster import SparkKMeansClustering
 from clustering.cluster_metadata import ClusterMetadataGenerator
 
-app = Flask(__name__)
+#TODO: Try different clustering algorithms
+import hdbscan
+
+
+
+# fix base directory for templates for Flask app
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'ui', 'templates')
+)
 app.config['UPLOAD_FOLDER'] = 'data/raw'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 
@@ -25,7 +41,7 @@ parser = DocumentParser()
 preprocessor = TextPreprocessor()
 ngram_extractor = NgramExtractor()
 tfidf_engine = None  # Initialize when needed
-kmeans = None  # Initialize when needed
+clustering_engine = None  # Initialize when needed
 metadata_gen = ClusterMetadataGenerator()
 
 # Storage for processed data
@@ -47,10 +63,12 @@ def upload_documents():
     if 'files' not in request.files:
         return jsonify({'error': 'No files provided'}), 400
     
+    print(f"DEBUG: Requess: {request}")
     files = request.files.getlist('files')
     uploaded_files = []
     errors = []
-    
+
+    #TODO: Check uploaded files for duplicates
     for file in files:
         if file and file.filename:
             # Validate file extension
@@ -67,7 +85,7 @@ def upload_documents():
             # Add to processing queue
             processing_queue.put(filepath)
             uploaded_files.append(filename)
-    
+    print(f"DEBUG: Processing queue: {list(processing_queue.queue)}")
     # Start background processing
     if uploaded_files:
         threading.Thread(target=process_documents_batch, daemon=True).start()
@@ -82,7 +100,7 @@ def process_documents_batch():
     """
     Background task to process uploaded documents
     """
-    global tfidf_engine, kmeans
+    global tfidf_engine, clustering_engine
     
     batch_documents = []
     
@@ -92,7 +110,8 @@ def process_documents_batch():
         
         # Parse document
         result = parser.parse_document(filepath)
-        
+
+        # print(f"DEBUG: Checking parsed text: {result}")
         if result['success']:
             # Preprocess text
             processed_text = preprocessor.preprocess(result['text'])
@@ -115,7 +134,7 @@ def process_documents_batch():
             
             document_store.append(document_data)
             batch_documents.append(document_data)
-    
+    print(f"DEBUG: document length: {len(document_store)}")
     # Perform clustering if we have enough documents
     if len(document_store) >= 5:
         perform_clustering()
@@ -125,6 +144,7 @@ def trigger_clustering():
     """
     Manually trigger clustering on current documents
     """
+
     if len(document_store) < 2:
         return jsonify({'error': 'Need at least 2 documents for clustering'}), 400
     
@@ -138,14 +158,18 @@ def perform_clustering():
     """
     Perform TF-IDF and K-Means clustering
     """
-    global tfidf_engine, kmeans, cluster_data
+    global tfidf_engine, clustering_engine, cluster_data
     
     # Initialize engines if needed
     if tfidf_engine is None:
         tfidf_engine = SparkTFIDFEngine()
-    if kmeans is None:
-        kmeans = SparkKMeansClustering(n_clusters=min(5, len(document_store)))
+
+    #TODO: Replace K-Means with some algorithm with unknow number of clusters, can deal with both little and large documents
+    if clustering_engine is None:
+        # clustering_engine = hdbscan.HDBSCAN( min_cluster_size=2, min_samples=2)
+        clustering_engine = SparkKMeansClustering(n_clusters=min(5, len(document_store)))
     
+    #TODO: TF-IDF should include n-grams
     # Prepare documents for TF-IDF
     docs_for_tfidf = [
         {'id': doc['id'], 'text': doc['text']} 
@@ -153,25 +177,25 @@ def perform_clustering():
     ]
     
     # Compute TF-IDF
-    tfidf_matrix = tfidf_engine.compute_tfidf(docs_for_tfidf)
+    tfidf_matrix, vocabulary = tfidf_engine.compute_tfidf(docs_for_tfidf)
+
+    # Check if TF-IDF matrix is valid
+    if len(tfidf_matrix.shape) != 2:
+        raise ValueError(f"Unexpected TF-IDF matrix shape: {tfidf_matrix.shape}")
+    print(f"DEBUG: TF-IDF matrix shape: {tfidf_matrix.shape}")
+    print(f"DEBUG: Vocabulary: {vocabulary}")
     
-    # Extract vocabulary (simplified - in practice, get from TF-IDF engine)
-    all_terms = set()
-    for doc in document_store:
-        all_terms.update(doc['text'].split())
-    vocabulary = list(all_terms)
-    
-    # Perform clustering
-    cluster_assignments = kmeans.fit_predict(tfidf_matrix)
+    # Perform clustering using HDBSCAN
+    cluster_assignments = clustering_engine.fit_predict(tfidf_matrix)
     
     # Generate cluster metadata
-    cluster_stats = kmeans.get_cluster_statistics(cluster_assignments)
+    cluster_stats = clustering_engine.get_cluster_statistics(cluster_assignments)
     
     cluster_data = {
         'clusters': {},
-        'silhouette_score': kmeans.evaluate_clustering(),
+        'silhouette_score': clustering_engine.evaluate_clustering(),
         'total_documents': len(document_store),
-        'num_clusters': kmeans.n_clusters
+        'num_clusters': clustering_engine.n_clusters
     }
     
     for cluster_id, stats in cluster_stats.items():
@@ -184,6 +208,7 @@ def perform_clustering():
         )
         cluster_data['clusters'][cluster_id] = metadata
     
+    print(f"DEBUG: Cluster data: {cluster_data}")
     return cluster_data
 
 @app.route('/api/clusters', methods=['GET'])

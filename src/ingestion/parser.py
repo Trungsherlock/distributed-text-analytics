@@ -2,7 +2,7 @@ import os
 import json
 from typing import Dict, List, Any
 from pathlib import Path
-import pdfminer.six
+# import pdfminer.six
 from pdfminer.high_level import extract_text
 from docx import Document
 import chardet
