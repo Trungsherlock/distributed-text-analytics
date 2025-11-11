@@ -67,24 +67,26 @@ async function handleFiles(files) {
 
 // Perform clustering
 async function performClustering() {
-    const statusPill = document.getElementById('clusterStatus');
-    const statusText = document.getElementById('clusterStatusText');
-    const spinner = statusPill ? statusPill.querySelector('.spinner') : null;
-    
     if (currentDocCount === 0) {
         alert('Upload at least one document before generating clusters.');
         return;
     }
+
+    const statusPill = ensureStatusPill();
+    const statusText = document.getElementById('clusterStatusText');
+    const spinner = statusPill ? statusPill.querySelector('.spinner') : null;
     
     try {
-        if (statusPill) {
+        if (statusText) {
             statusText.textContent = 'Generating clusters…';
-            statusPill.hidden = false;
-            if (spinner) {
-                spinner.style.opacity = '1';
-                spinner.style.transform = 'scale(1)';
-            }
+        }
+        if (statusPill) {
             statusPill.style.padding = '8px 14px';
+        }
+        if (spinner) {
+            spinner.style.display = 'inline-block';
+            spinner.style.opacity = '1';
+            spinner.style.transform = 'scale(1)';
         }
         
         const response = await fetch('/api/cluster', {
@@ -98,35 +100,14 @@ async function performClustering() {
             updateStatistics();
             renderLabelVisualizer();
             renderDocumentPreview();
-            if (statusPill) {
-                if (spinner) {
-                    spinner.style.opacity = '0';
-                    spinner.style.transform = 'scale(0.6)';
-                }
-                statusText.textContent = 'Clusters updated';
-                statusPill.style.padding = '8px 18px';
-                setTimeout(() => statusPill.hidden = true, 2000);
-            }
         } else {
             const error = await response.json();
             alert('Clustering failed: ' + error.error);
-            if (statusPill) {
-                if (spinner) {
-                    spinner.style.opacity = '0';
-                    spinner.style.transform = 'scale(0.6)';
-                }
-                statusPill.hidden = true;
-            }
         }
     } catch (error) {
         alert('Error: ' + error.message);
-        if (statusPill) {
-            if (spinner) {
-                spinner.style.opacity = '0';
-                spinner.style.transform = 'scale(0.6)';
-            }
-            statusPill.hidden = true;
-        }
+    } finally {
+        teardownStatusPill();
     }
 }
 
@@ -209,6 +190,42 @@ async function updateStatistics() {
 // Initial load
 updateStatistics();
 setInterval(updateStatistics, 5000);  // Update every 5 seconds
+
+function ensureStatusPill() {
+    const container = document.getElementById('clusterStatusContainer');
+    if (!container) {
+        return null;
+    }
+    let pill = document.getElementById('clusterStatus');
+    if (!pill) {
+        pill = document.createElement('div');
+        pill.className = 'status-pill';
+        pill.id = 'clusterStatus';
+        pill.innerHTML = `
+            <span class="spinner"></span>
+            <span id="clusterStatusText"></span>
+        `;
+        container.appendChild(pill);
+    }
+    return pill;
+}
+
+function teardownStatusPill() {
+    const pill = document.getElementById('clusterStatus');
+    if (!pill) {
+        return;
+    }
+    const spinner = pill.querySelector('.spinner');
+    if (spinner) {
+        spinner.style.opacity = '0';
+        spinner.style.transform = 'scale(0.6)';
+    }
+    setTimeout(() => {
+        if (pill.parentNode) {
+            pill.parentNode.removeChild(pill);
+        }
+    }, 200);
+}
 
 function renderLabelVisualizer(cluster = null) {
     const container = document.getElementById('labelVisualizer');
