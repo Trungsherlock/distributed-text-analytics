@@ -146,9 +146,6 @@ def process_documents_batch():
             document_store.append(document_data)
             batch_documents.append(document_data)
     print(f"DEBUG: document length: {len(document_store)}")
-    # Perform clustering if we have enough documents
-    if len(document_store) >= 5:
-        perform_clustering()
 
 @app.route('/api/cluster', methods=['POST'])
 def trigger_clustering():
@@ -165,11 +162,21 @@ def trigger_clustering():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def perform_clustering():
+def perform_clustering(num_workers: int = None):
     """
-    Perform TF-IDF and K-Means clustering
+    Perform TF-IDF and K-Means clustering WITH performance metrics
+    
+    Args:
+        num_workers: Number of Spark workers (None = auto-detect)
+    
+    Returns:
+        Dictionary containing clusters, metrics, and performance data
     """
     global tfidf_engine, clustering_engine, cluster_data
+    
+    import time
+    
+    total_start = time.time()
     
     # Initialize engines if needed
     if tfidf_engine is None:
@@ -178,7 +185,10 @@ def perform_clustering():
     #TODO: Replace K-Means with some algorithm with unknow number of clusters, can deal with both little and large documents
     if clustering_engine is None:
         # clustering_engine = hdbscan.HDBSCAN( min_cluster_size=2, min_samples=2)
-        clustering_engine = SparkKMeansClustering(n_clusters=min(10, len(document_store)))
+        clustering_engine = SparkKMeansClustering(
+            n_clusters=min(10, len(document_store)),
+            num_workers=num_workers
+        )
     
     #TODO: TF-IDF should include n-grams
     # Prepare documents for TF-IDF
@@ -187,17 +197,19 @@ def perform_clustering():
         for doc in document_store
     ]
     
-    # Compute TF-IDF
+    # Compute TF-IDF (track time)
+    tfidf_start = time.time()
     tfidf_matrix, vocabulary = tfidf_engine.compute_tfidf(docs_for_tfidf)
+    tfidf_time = time.time() - tfidf_start
 
     # Check if TF-IDF matrix is valid
     if len(tfidf_matrix.shape) != 2:
         raise ValueError(f"Unexpected TF-IDF matrix shape: {tfidf_matrix.shape}")
     print(f"DEBUG: TF-IDF matrix shape: {tfidf_matrix.shape}")
-    print(f"DEBUG: Vocabulary: {vocabulary}")
+    print(f"DEBUG: Vocabulary size: {len(vocabulary)}")
     
-    # Perform clustering using HDBSCAN
-    cluster_assignments = clustering_engine.fit_predict(tfidf_matrix)
+    # Perform clustering (NOW returns metrics too!)
+    cluster_assignments, perf_metrics = clustering_engine.fit_predict(tfidf_matrix)
     
     # Generate cluster metadata
     cluster_stats = clustering_engine.get_cluster_statistics(cluster_assignments)
@@ -206,9 +218,26 @@ def perform_clustering():
         'clusters': {},
         'silhouette_score': clustering_engine.evaluate_clustering(),
         'total_documents': len(document_store),
-        'num_clusters': clustering_engine.n_clusters
+        'num_clusters': clustering_engine.n_clusters,
+        
+        # NEW: Performance metrics section
+        'performance_metrics': {
+            **perf_metrics,
+            'tfidf_computation_time_seconds': round(tfidf_time, 3),
+            'total_pipeline_time_seconds': round(time.time() - total_start, 3),
+            'avg_time_per_document_ms': round(perf_metrics['clustering_time_seconds'] / len(document_store) * 1000, 2)
+        },
+        
+        # NEW: Distributed computing insights
+        'distributed_computing_analysis': {
+            'parallelism_factor': perf_metrics['num_workers'],
+            'data_partitions': perf_metrics['num_partitions'],
+            'documents_per_partition': len(document_store) // max(perf_metrics['num_partitions'], 1),
+            'convergence_iterations': perf_metrics['num_iterations']
+        }
     }
     
+    # Generate cluster metadata with TOP KEYWORDS for human interpretation
     for cluster_id, stats in cluster_stats.items():
         metadata = metadata_gen.generate_cluster_metadata(
             cluster_id,
@@ -217,9 +246,17 @@ def perform_clustering():
             tfidf_matrix,
             vocabulary
         )
-        cluster_data['clusters'][cluster_id] = metadata
+        
+        # Extract top 5 keywords for simple cluster label
+        top_keywords = [term[0] for term in metadata['top_terms'][:5]]
+        
+        cluster_data['clusters'][cluster_id] = {
+            **metadata,
+            'simple_label': ' | '.join(top_keywords[:3]).upper(),  # Top 3 keywords
+            'percentage': stats['percentage']
+        }
     
-    print(f"DEBUG: Cluster data: {cluster_data}")
+    print(f"DEBUG: Clustering complete in {cluster_data['performance_metrics']['total_pipeline_time_seconds']}s")
     return cluster_data
 
 @app.route('/api/clusters', methods=['GET'])
@@ -260,6 +297,25 @@ def get_cluster_details(cluster_id):
     }
     
     return jsonify(response)
+
+@app.route('/api/cluster/metrics', methods=['GET'])
+def get_cluster_metrics():
+    """
+    Get current clustering performance metrics
+    Returns performance data and distributed computing analysis
+    """
+    if not cluster_data:
+        return jsonify({'error': 'No clustering performed yet'}), 404
+    
+    return jsonify({
+        'performance': cluster_data.get('performance_metrics', {}),
+        'distributed_analysis': cluster_data.get('distributed_computing_analysis', {}),
+        'cluster_quality': {
+            'silhouette_score': cluster_data.get('silhouette_score'),
+            'num_clusters': cluster_data.get('num_clusters'),
+            'total_documents': cluster_data.get('total_documents')
+        }
+    })
 
 @app.route('/api/documents/<int:doc_id>', methods=['GET'])
 def get_document(doc_id):

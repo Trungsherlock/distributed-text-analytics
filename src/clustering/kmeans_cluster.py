@@ -6,6 +6,8 @@ from pyspark.sql import SparkSession
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.functions import udf
 import numpy as np
+import time
+import psutil
 from typing import List, Dict, Tuple
 
 class SparkKMeansClustering:
@@ -13,7 +15,7 @@ class SparkKMeansClustering:
     Distributed K-Means clustering using Spark MLlib
     """
     
-    def __init__(self, n_clusters: int = 5, max_iter: int = 100, seed: int = 42):
+    def __init__(self, n_clusters: int = 5, max_iter: int = 100, seed: int = 42, num_workers: int = None):
         """
         Initialize K-Means clustering
         
@@ -21,29 +23,47 @@ class SparkKMeansClustering:
             n_clusters: Number of clusters
             max_iter: Maximum iterations
             seed: Random seed
+            num_workers: Number of Spark workers (None = auto-detect)
         """
         self.n_clusters = n_clusters
         self.max_iter = max_iter
         self.seed = seed
         
-        self.spark = SparkSession.builder \
+        # Configure Spark with specific worker count for performance testing
+        builder = SparkSession.builder \
             .appName("KMeansClustering") \
             .config("spark.driver.memory", "4g") \
-            .getOrCreate()
+            .config("spark.executor.memory", "2g")
+        
+        if num_workers:
+            builder = builder \
+                .config("spark.executor.instances", str(num_workers)) \
+                .config("spark.default.parallelism", str(num_workers * 2))
+        
+        self.spark = builder.getOrCreate()
+        self.num_workers = num_workers or self.spark.sparkContext.defaultParallelism
         
         self.model = None
         self.predictions = None
+        
+        # Performance tracking attributes
+        self.performance_metrics = {}
+        self.iteration_count = 0
     
-    def fit_predict(self, tfidf_matrix: np.ndarray) -> np.ndarray:
+    def fit_predict(self, tfidf_matrix: np.ndarray) -> Tuple[np.ndarray, Dict]:
         """
-        Fit K-Means model and predict clusters
+        Fit K-Means model and predict clusters with performance metrics
         
         Args:
             tfidf_matrix: TF-IDF feature matrix
             
         Returns:
-            Cluster assignments for each document
+            Tuple of (cluster assignments, performance metrics dict)
         """
+        # Start performance tracking
+        start_time = time.time()
+        start_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+        
         # Convert numpy array to Spark DataFrame
         def array_to_vector(array):
             return Vectors.dense(array.tolist())
@@ -53,6 +73,9 @@ class SparkKMeansClustering:
         # Create DataFrame with features
         data = [(Vectors.dense(row.tolist()),) for row in tfidf_matrix]
         df = self.spark.createDataFrame(data, ["features"])
+        
+        # Track partitioning
+        num_partitions = df.rdd.getNumPartitions()
         
         # Train K-Means model
         kmeans = KMeans(
@@ -64,13 +87,33 @@ class SparkKMeansClustering:
         )
         
         self.model = kmeans.fit(df)
+        
+        # Get actual iterations from model
+        self.iteration_count = self.model.summary.numIter
+        
         self.predictions = self.model.transform(df)
         
         # Extract cluster assignments
         clusters = self.predictions.select("cluster").collect()
         cluster_assignments = np.array([row["cluster"] for row in clusters])
         
-        return cluster_assignments
+        # End performance tracking
+        end_time = time.time()
+        end_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+        
+        # Collect performance metrics
+        self.performance_metrics = {
+            'clustering_time_seconds': round(end_time - start_time, 3),
+            'memory_usage_mb': round(end_memory - start_memory, 2),
+            'num_workers': self.num_workers,
+            'num_partitions': num_partitions,
+            'num_iterations': self.iteration_count,
+            'num_documents': len(tfidf_matrix),
+            'feature_dimensions': tfidf_matrix.shape[1],
+            'documents_per_worker': len(tfidf_matrix) // max(self.num_workers, 1),
+        }
+        
+        return cluster_assignments, self.performance_metrics
     
     def get_cluster_centers(self) -> np.ndarray:
         """
