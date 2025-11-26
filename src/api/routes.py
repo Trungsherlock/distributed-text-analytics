@@ -17,12 +17,12 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 # Import our modules
-from src.ingestion.parser import DocumentParser
-from src.ingestion.preprocessor import TextPreprocessor
-from src.analytics.ngram_extractor import NgramExtractor
-from src.analytics.tfidf_engine import SparkTFIDFEngine
-from src.clustering.kmeans_cluster import SparkKMeansClustering
-from src.clustering.cluster_metadata import ClusterMetadataGenerator
+from ingestion.parser import DocumentParser
+from ingestion.preprocessor import TextPreprocessor
+from analytics.ngram_extractor import NgramExtractor
+from analytics.tfidf_engine import SparkTFIDFEngine
+from clustering.kmeans_cluster import SparkKMeansClustering
+from clustering.cluster_metadata import ClusterMetadataGenerator
 
 
 # fix base directory for templates for Flask app
