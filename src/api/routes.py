@@ -1,12 +1,13 @@
 # src/api/routes.py
 
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 import os
 import json
 from typing import Dict, List
 import threading
 import queue
+from pathlib import Path
 
 # add project root to sys.path for easier imports
 import os, sys
@@ -16,16 +17,12 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 # Import our modules
-from ingestion.parser import DocumentParser
-from ingestion.preprocessor import TextPreprocessor
-from analytics.ngram_extractor import NgramExtractor
-from analytics.tfidf_engine import SparkTFIDFEngine
-from clustering.kmeans_cluster import SparkKMeansClustering
-from clustering.cluster_metadata import ClusterMetadataGenerator
-
-#TODO: Try different clustering algorithms
-import hdbscan
-
+from src.ingestion.parser import DocumentParser
+from src.ingestion.preprocessor import TextPreprocessor
+from src.analytics.ngram_extractor import NgramExtractor
+from src.analytics.tfidf_engine import SparkTFIDFEngine
+from src.clustering.kmeans_cluster import SparkKMeansClustering
+from src.clustering.cluster_metadata import ClusterMetadataGenerator
 
 
 # fix base directory for templates for Flask app
@@ -33,6 +30,7 @@ app = Flask(
     __name__,
     template_folder=os.path.join(BASE_DIR, 'ui', 'templates')
 )
+
 app.config['UPLOAD_FOLDER'] = 'data/raw'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 
@@ -53,6 +51,16 @@ processing_queue = queue.Queue()
 def index():
     """Main dashboard page"""
     return render_template('index.html')
+
+@app.route('/scripts/<path:filename>')
+def ui_scripts(filename):
+    """Serve UI JavaScript assets"""
+    return send_from_directory(str(UI_DIR / "scripts"), filename)
+
+@app.route('/styles/<path:filename>')
+def ui_styles(filename):
+    """Serve UI CSS assets"""
+    return send_from_directory(str(UI_DIR / "styles"), filename)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_documents():
@@ -121,12 +129,14 @@ def process_documents_batch():
             
             # Store document
             doc_id = len(document_store)
+            original_text = result.get('text', '')
             document_data = {
                 'id': doc_id,
                 'file_name': result['file_name'],
                 'format': result['format'],
                 'text': processed_text,
-                'original_text': result['text'][:500],  # Store snippet
+                'original_text': original_text,
+                'preview_text': original_text[:500],
                 'ngrams': top_ngrams,
                 'metadata': result['metadata'],
                 'word_count': result['word_count']
@@ -232,15 +242,16 @@ def get_cluster_details(cluster_id):
     cluster_info = cluster_data['clusters'][cluster_id]
     
     # Add document details
-    cluster_documents = [
-        {
+    cluster_documents = []
+    for idx in cluster_info['document_indices']:
+        doc = document_store[idx]
+        preview_source = doc.get('preview_text') or doc.get('original_text', '')
+        cluster_documents.append({
             'id': idx,
-            'file_name': document_store[idx]['file_name'],
-            'format': document_store[idx]['format'],
-            'preview': document_store[idx]['original_text'][:200] + '...'
-        }
-        for idx in cluster_info['document_indices']
-    ]
+            'file_name': doc['file_name'],
+            'format': doc['format'],
+            'preview': (preview_source[:200] + '...') if preview_source else ''
+        })
     
     response = {
         **cluster_info,
@@ -263,7 +274,10 @@ def get_document(doc_id):
         'file_name': doc['file_name'],
         'format': doc['format'],
         'word_count': doc['word_count'],
-        'preview': doc['original_text'],
+        'preview': doc.get('preview_text') or doc.get('original_text', '')[:500],
+        'clean_text': doc.get('text', ''),
+        'original_text': doc.get('original_text', ''),
+        'metadata': doc.get('metadata', {}),
         'top_unigrams': doc['ngrams'].get(1, [])[:10] if 1 in doc['ngrams'] else [],
         'top_bigrams': doc['ngrams'].get(2, [])[:10] if 2 in doc['ngrams'] else []
     })
@@ -275,11 +289,13 @@ def get_statistics():
     """
     accuracy_report = parser.get_accuracy_report()
     
+    avg_time = accuracy_report.get('avg_time_per_doc') or accuracy_report.get('stats', {}).get('avg_processing_time', 0)
+    
     stats = {
         'total_documents': len(document_store),
         'clusters_created': len(cluster_data.get('clusters', {})),
         'parsing_accuracy': accuracy_report['accuracy'],
-        'avg_processing_time': accuracy_report['avg_time_per_doc'],
+        'avg_processing_time': avg_time,
         'silhouette_score': cluster_data.get('silhouette_score', 0),
         'formats': {}
     }

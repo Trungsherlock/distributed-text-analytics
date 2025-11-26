@@ -9,20 +9,20 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # 3. Create directory structure
-python scripts/prepare_data.py
+python -m src.main
 
 # 4. Download NLTK data
 python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
 
-# 5. Place your downloaded Kaggle datasets in 'downloads' folder
+# 5. Place your downloaded Kaggle datasets in 'raw' folder
 # Then run the data preparation script again
-python scripts/prepare_data.py
+python -m src.main
 
 # 6. Run the application
-python src/api/routes.py
+python src.api.routes.py
 
 # 7. Access the UI
-# Open browser to http://localhost:5000
+# Open browser to http://127.0.0.1:5000
 
 # 8. Run tests
 python test_milestone.py
