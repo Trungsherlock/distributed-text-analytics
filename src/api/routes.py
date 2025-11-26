@@ -167,7 +167,7 @@ def perform_clustering():
     #TODO: Replace K-Means with some algorithm with unknow number of clusters, can deal with both little and large documents
     if clustering_engine is None:
         # clustering_engine = hdbscan.HDBSCAN( min_cluster_size=2, min_samples=2)
-        clustering_engine = SparkKMeansClustering(n_clusters=min(5, len(document_store)))
+        clustering_engine = SparkKMeansClustering(n_clusters=min(10, len(document_store)))
     
     #TODO: TF-IDF should include n-grams
     # Prepare documents for TF-IDF
