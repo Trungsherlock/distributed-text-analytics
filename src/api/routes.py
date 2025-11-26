@@ -28,7 +28,7 @@ from clustering.cluster_metadata import ClusterMetadataGenerator
 # fix base directory for templates for Flask app
 app = Flask(
     __name__,
-    template_folder=os.path.join(BASE_DIR, 'ui', 'templates')
+    template_folder=os.path.join(BASE_DIR, 'ui')
 )
 
 app.config['UPLOAD_FOLDER'] = 'data/raw'
@@ -47,6 +47,7 @@ document_store = []
 cluster_data = {}
 processing_queue = queue.Queue()
 
+
 @app.route('/')
 def index():
     """Main dashboard page"""
@@ -55,12 +56,12 @@ def index():
 @app.route('/scripts/<path:filename>')
 def ui_scripts(filename):
     """Serve UI JavaScript assets"""
-    return send_from_directory(str(UI_DIR / "scripts"), filename)
+    return send_from_directory(os.path.join(BASE_DIR, "ui", "scripts"), filename)
 
 @app.route('/styles/<path:filename>')
 def ui_styles(filename):
     """Serve UI CSS assets"""
-    return send_from_directory(str(UI_DIR / "styles"), filename)
+    return send_from_directory(os.path.join(BASE_DIR, "ui", "styles"), filename)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_documents():
