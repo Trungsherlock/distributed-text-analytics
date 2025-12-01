@@ -1,372 +1,294 @@
 # src/api/routes.py
 
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 import os
-import json
-from typing import Dict, List
 import threading
 import queue
+from typing import List, Dict
 from pathlib import Path
+import sys
 
-# add project root to sys.path for easier imports
-import os, sys
-
-# add .../src to sys.path
+# -------------------------------------------------------------------
+# Fix import paths
+# -------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
-# Import our modules
-from ingestion.parser import DocumentParser
-from ingestion.preprocessor import TextPreprocessor
-from analytics.ngram_extractor import NgramExtractor
-from analytics.tfidf_engine import SparkTFIDFEngine
-from clustering.kmeans_cluster import SparkKMeansClustering
-from clustering.cluster_metadata import ClusterMetadataGenerator
+TEMPLATE_DIR = os.path.join(BASE_DIR, "ui", "templates")
 
+# -------------------------------------------------------------------
+# Imports
+# -------------------------------------------------------------------
+from src.ingestion.parser import DocumentParser
+from src.ingestion.preprocessor import TextPreprocessor
+from src.analytics.ngram_extractor import NgramExtractor
+from src.analytics.tfidf_engine import SparkTFIDFEngine
+from src.clustering.kmeans_cluster import SparkKMeansClustering
+from src.clustering.cluster_metadata import ClusterMetadataGenerator
 
-# fix base directory for templates for Flask app
-app = Flask(
-    __name__,
-    template_folder=os.path.join(BASE_DIR, 'ui')
-)
+# -------------------------------------------------------------------
+# Flask App
+# -------------------------------------------------------------------
+app = Flask(__name__, template_folder=TEMPLATE_DIR)
 
-app.config['UPLOAD_FOLDER'] = 'data/raw'
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+app.config["UPLOAD_FOLDER"] = "data/raw"
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024  # 100 MB
 
-# Initialize components
+os.makedirs("data/raw", exist_ok=True)
+os.makedirs("data/processed", exist_ok=True)
+
+# -------------------------------------------------------------------
+# Components
+# -------------------------------------------------------------------
 parser = DocumentParser()
 preprocessor = TextPreprocessor()
 ngram_extractor = NgramExtractor()
-tfidf_engine = None  # Initialize when needed
-clustering_engine = None  # Initialize when needed
+
+tfidf_engine = None
+clustering_engine = None
 metadata_gen = ClusterMetadataGenerator()
 
-# Storage for processed data
-document_store = []
+document_store: List[Dict] = []
 cluster_data = {}
 processing_queue = queue.Queue()
 
+# Spark lock (Spark is NOT thread-safe)
+spark_lock = threading.Lock()
 
-@app.route('/')
+# -------------------------------------------------------------------
+# UI Routes
+# -------------------------------------------------------------------
+@app.route("/")
 def index():
-    """Main dashboard page"""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/scripts/<path:filename>')
+
+@app.route("/scripts/<path:filename>")
 def ui_scripts(filename):
-    """Serve UI JavaScript assets"""
     return send_from_directory(os.path.join(BASE_DIR, "ui", "scripts"), filename)
 
-@app.route('/styles/<path:filename>')
+
+@app.route("/styles/<path:filename>")
 def ui_styles(filename):
-    """Serve UI CSS assets"""
     return send_from_directory(os.path.join(BASE_DIR, "ui", "styles"), filename)
 
-@app.route('/api/upload', methods=['POST'])
+# -------------------------------------------------------------------
+# Upload Endpoint
+# -------------------------------------------------------------------
+@app.route("/api/upload", methods=["POST"])
 def upload_documents():
-    """
-    Endpoint for document upload
-    Handles multiple files, validates format, starts processing
-    """
-    if 'files' not in request.files:
-        return jsonify({'error': 'No files provided'}), 400
-    
-    print(f"DEBUG: Requess: {request}")
-    files = request.files.getlist('files')
-    uploaded_files = []
-    errors = []
+    if "files" not in request.files:
+        return jsonify({"error": "No files provided"}), 400
 
-    #TODO: Check uploaded files for duplicates
+    files = request.files.getlist("files")
+    uploaded, errors = [], []
+
     for file in files:
-        if file and file.filename:
-            # Validate file extension
-            extension = os.path.splitext(file.filename)[1].lower()
-            if extension not in DocumentParser.SUPPORTED_FORMATS:
-                errors.append(f"{file.filename}: Unsupported format")
-                continue
-            
-            # Save file
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            
-            # Add to processing queue
-            processing_queue.put(filepath)
-            uploaded_files.append(filename)
-    print(f"DEBUG: Processing queue: {list(processing_queue.queue)}")
-    # Start background processing
-    if uploaded_files:
+        if not file or not file.filename:
+            continue
+
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in DocumentParser.SUPPORTED_FORMATS:
+            errors.append(f"{file.filename}: Unsupported format")
+            continue
+
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        file.save(filepath)
+
+        processing_queue.put(filepath)
+        uploaded.append(filename)
+
+    if uploaded:
         threading.Thread(target=process_documents_batch, daemon=True).start()
-    
+
     return jsonify({
-        'uploaded': uploaded_files,
-        'errors': errors,
-        'message': f'Successfully uploaded {len(uploaded_files)} files for processing'
+        "uploaded": uploaded,
+        "errors": errors,
+        "message": f"Queued {len(uploaded)} files for processing"
     })
 
+# -------------------------------------------------------------------
+# Background Document Processing
+# -------------------------------------------------------------------
 def process_documents_batch():
-    """
-    Background task to process uploaded documents
-    """
     global tfidf_engine, clustering_engine
-    
-    batch_documents = []
-    
-    # Process all queued documents
+
     while not processing_queue.empty():
         filepath = processing_queue.get()
-        
-        # Parse document
         result = parser.parse_document(filepath)
 
-        # print(f"DEBUG: Checking parsed text: {result}")
-        if result['success']:
-            # Preprocess text
-            processed_text = preprocessor.preprocess(result['text'])
-            
-            # Extract n-grams
-            top_ngrams = ngram_extractor.get_top_ngrams(processed_text)
-            
-            # Store document
-            doc_id = len(document_store)
-            original_text = result.get('text', '')
-            document_data = {
-                'id': doc_id,
-                'file_name': result['file_name'],
-                'format': result['format'],
-                'text': processed_text,
-                'original_text': original_text,
-                'preview_text': original_text[:500],
-                'ngrams': top_ngrams,
-                'metadata': result['metadata'],
-                'word_count': result['word_count']
-            }
-            
-            document_store.append(document_data)
-            batch_documents.append(document_data)
-    print(f"DEBUG: document length: {len(document_store)}")
+        if not result.get("success"):
+            continue
 
-@app.route('/api/cluster', methods=['POST'])
+        processed_text = preprocessor.preprocess(result["text"])
+        top_ngrams = ngram_extractor.get_top_ngrams(processed_text)
+
+        doc_id = len(document_store)
+
+        original_text = result.get("text", "")
+        document_store.append({
+            "id": doc_id,
+            "file_name": result["file_name"],
+            "format": result["format"],
+            "text": processed_text,
+            "original_text": original_text,
+            "preview_text": original_text[:500],
+            "ngrams": top_ngrams,
+            "metadata": result["metadata"],
+            "word_count": result["word_count"],
+        })
+
+    # reset engines after new docs
+    tfidf_engine = None
+    clustering_engine = None
+
+# -------------------------------------------------------------------
+# Trigger Clustering
+# -------------------------------------------------------------------
+@app.route("/api/cluster", methods=["POST"])
 def trigger_clustering():
-    """
-    Manually trigger clustering on current documents
-    """
-
     if len(document_store) < 2:
-        return jsonify({'error': 'Need at least 2 documents for clustering'}), 400
-    
-    try:
-        result = perform_clustering()
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": "Need at least 2 documents"}), 400
 
-def perform_clustering(num_workers: int = None):
-    """
-    Perform TF-IDF and K-Means clustering WITH performance metrics
-    
-    Args:
-        num_workers: Number of Spark workers (None = auto-detect)
-    
-    Returns:
-        Dictionary containing clusters, metrics, and performance data
-    """
+    try:
+        with spark_lock:
+            result = perform_clustering()
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# -------------------------------------------------------------------
+# Clustering Pipeline
+# -------------------------------------------------------------------
+def perform_clustering(num_workers=None):
     global tfidf_engine, clustering_engine, cluster_data
-    
     import time
-    
+
     total_start = time.time()
-    
-    # Initialize engines if needed
+
     if tfidf_engine is None:
         tfidf_engine = SparkTFIDFEngine()
 
-    #TODO: Replace K-Means with some algorithm with unknow number of clusters, can deal with both little and large documents
     if clustering_engine is None:
-        # clustering_engine = hdbscan.HDBSCAN( min_cluster_size=2, min_samples=2)
         clustering_engine = SparkKMeansClustering(
             n_clusters=min(10, len(document_store)),
             num_workers=num_workers
         )
-    
-    #TODO: TF-IDF should include n-grams
-    # Prepare documents for TF-IDF
-    docs_for_tfidf = [
-        {'id': doc['id'], 'text': doc['text']} 
-        for doc in document_store
-    ]
-    
-    # Compute TF-IDF (track time)
+
+    docs_for_tfidf = [{"id": d["id"], "text": d["text"]} for d in document_store]
+
+    # TF-IDF
     tfidf_start = time.time()
-    tfidf_matrix, vocabulary = tfidf_engine.compute_tfidf(docs_for_tfidf)
+    tfidf_matrix, vocabulary, tfidf_metrics = tfidf_engine.compute_tfidf(docs_for_tfidf)
     tfidf_time = time.time() - tfidf_start
 
-    # Check if TF-IDF matrix is valid
-    if len(tfidf_matrix.shape) != 2:
-        raise ValueError(f"Unexpected TF-IDF matrix shape: {tfidf_matrix.shape}")
-    print(f"DEBUG: TF-IDF matrix shape: {tfidf_matrix.shape}")
-    print(f"DEBUG: Vocabulary size: {len(vocabulary)}")
-    
-    # Perform clustering (NOW returns metrics too!)
-    cluster_assignments, perf_metrics = clustering_engine.fit_predict(tfidf_matrix)
-    
-    # Generate cluster metadata
-    cluster_stats = clustering_engine.get_cluster_statistics(cluster_assignments)
-    
+    # clustering
+    labels = clustering_engine.fit_predict(tfidf_matrix)
+    cluster_stats = clustering_engine.get_cluster_statistics(labels)
+
     cluster_data = {
-        'clusters': {},
-        'silhouette_score': clustering_engine.evaluate_clustering(),
-        'total_documents': len(document_store),
-        'num_clusters': clustering_engine.n_clusters,
-        
-        # NEW: Performance metrics section
-        'performance_metrics': {
-            **perf_metrics,
-            'tfidf_computation_time_seconds': round(tfidf_time, 3),
-            'total_pipeline_time_seconds': round(time.time() - total_start, 3),
-            'avg_time_per_document_ms': round(perf_metrics['clustering_time_seconds'] / len(document_store) * 1000, 2)
-        },
-        
-        # NEW: Distributed computing insights
-        'distributed_computing_analysis': {
-            'parallelism_factor': perf_metrics['num_workers'],
-            'data_partitions': perf_metrics['num_partitions'],
-            'documents_per_partition': len(document_store) // max(perf_metrics['num_partitions'], 1),
-            'convergence_iterations': perf_metrics['num_iterations']
-        }
+        "clusters": {},
+        "silhouette_score": clustering_engine.evaluate_clustering(),
+        "num_clusters": clustering_engine.n_clusters,
+        "total_documents": len(document_store),
+        "tfidf_metrics": tfidf_metrics,
     }
-    
-    # Generate cluster metadata with TOP KEYWORDS for human interpretation
-    for cluster_id, stats in cluster_stats.items():
+
+    # attach metadata
+    for cid, stats in cluster_stats.items():
         metadata = metadata_gen.generate_cluster_metadata(
-            cluster_id,
-            stats['document_indices'],
+            cid,
+            stats["document_indices"],
             document_store,
             tfidf_matrix,
-            vocabulary
+            vocabulary,
         )
-        
-        # Extract top 5 keywords for simple cluster label
-        top_keywords = [term[0] for term in metadata['top_terms'][:5]]
-        
-        cluster_data['clusters'][cluster_id] = {
-            **metadata,
-            'simple_label': ' | '.join(top_keywords[:3]).upper(),  # Top 3 keywords
-            'percentage': stats['percentage']
-        }
-    
-    print(f"DEBUG: Clustering complete in {cluster_data['performance_metrics']['total_pipeline_time_seconds']}s")
+        cluster_data["clusters"][cid] = metadata
+
     return cluster_data
 
-@app.route('/api/clusters', methods=['GET'])
+# -------------------------------------------------------------------
+# Get Cluster Summary
+# -------------------------------------------------------------------
+@app.route("/api/clusters", methods=["GET"])
 def get_clusters():
-    """
-    Get current cluster information
-    """
     if not cluster_data:
-        return jsonify({'message': 'No clustering performed yet'}), 404
-    
+        return jsonify({"message": "No clustering yet"}), 404
     return jsonify(cluster_data)
 
-@app.route('/api/cluster/<int:cluster_id>', methods=['GET'])
+# -------------------------------------------------------------------
+# Cluster Details Endpoint
+# -------------------------------------------------------------------
+@app.route("/api/cluster/<int:cluster_id>", methods=["GET"])
 def get_cluster_details(cluster_id):
-    """
-    Get detailed information about a specific cluster
-    """
-    if not cluster_data or cluster_id not in cluster_data['clusters']:
-        return jsonify({'error': 'Cluster not found'}), 404
-    
-    cluster_info = cluster_data['clusters'][cluster_id]
-    
-    # Add document details
-    cluster_documents = []
-    for idx in cluster_info['document_indices']:
+    if cluster_id not in cluster_data.get("clusters", {}):
+        return jsonify({"error": "Cluster not found"}), 404
+
+    info = cluster_data["clusters"][cluster_id]
+    docs = []
+
+    for idx in info["document_indices"]:
         doc = document_store[idx]
-        preview_source = doc.get('preview_text') or doc.get('original_text', '')
-        cluster_documents.append({
-            'id': idx,
-            'file_name': doc['file_name'],
-            'format': doc['format'],
-            'preview': (preview_source[:200] + '...') if preview_source else ''
+        preview_src = doc.get("preview_text") or doc.get("original_text", "")
+
+        docs.append({
+            "id": idx,
+            "file_name": doc["file_name"],
+            "format": doc["format"],
+            "preview": preview_src[:200] + "...",
         })
-    
-    response = {
-        **cluster_info,
-        'documents': cluster_documents
-    }
-    
-    return jsonify(response)
 
-@app.route('/api/cluster/metrics', methods=['GET'])
-def get_cluster_metrics():
-    """
-    Get current clustering performance metrics
-    Returns performance data and distributed computing analysis
-    """
-    if not cluster_data:
-        return jsonify({'error': 'No clustering performed yet'}), 404
-    
-    return jsonify({
-        'performance': cluster_data.get('performance_metrics', {}),
-        'distributed_analysis': cluster_data.get('distributed_computing_analysis', {}),
-        'cluster_quality': {
-            'silhouette_score': cluster_data.get('silhouette_score'),
-            'num_clusters': cluster_data.get('num_clusters'),
-            'total_documents': cluster_data.get('total_documents')
-        }
-    })
+    return jsonify({**info, "documents": docs})
 
-@app.route('/api/documents/<int:doc_id>', methods=['GET'])
+# -------------------------------------------------------------------
+# Document Details
+# -------------------------------------------------------------------
+@app.route("/api/documents/<int:doc_id>", methods=["GET"])
 def get_document(doc_id):
-    """
-    Get document details
-    """
     if doc_id < 0 or doc_id >= len(document_store):
-        return jsonify({'error': 'Document not found'}), 404
-    
+        return jsonify({"error": "Document not found"}), 404
+
     doc = document_store[doc_id]
+
     return jsonify({
-        'id': doc['id'],
-        'file_name': doc['file_name'],
-        'format': doc['format'],
-        'word_count': doc['word_count'],
-        'preview': doc.get('preview_text') or doc.get('original_text', '')[:500],
-        'clean_text': doc.get('text', ''),
-        'original_text': doc.get('original_text', ''),
-        'metadata': doc.get('metadata', {}),
-        'top_unigrams': doc['ngrams'].get(1, [])[:10] if 1 in doc['ngrams'] else [],
-        'top_bigrams': doc['ngrams'].get(2, [])[:10] if 2 in doc['ngrams'] else []
+        "id": doc["id"],
+        "file_name": doc["file_name"],
+        "format": doc["format"],
+        "word_count": doc["word_count"],
+        "preview": doc.get("preview_text") or doc.get("original_text", "")[:500],
+        "clean_text": doc.get("text", ""),
+        "original_text": doc.get("original_text", ""),
+        "metadata": doc.get("metadata", {}),
+        "top_unigrams": doc["ngrams"].get(1, [])[:10],
+        "top_bigrams": doc["ngrams"].get(2, [])[:10],
     })
 
-@app.route('/api/stats', methods=['GET'])
+# -------------------------------------------------------------------
+# System Statistics
+# -------------------------------------------------------------------
+@app.route("/api/stats", methods=["GET"])
 def get_statistics():
-    """
-    Get system statistics and performance metrics
-    """
     accuracy_report = parser.get_accuracy_report()
-    
-    avg_time = accuracy_report.get('avg_time_per_doc') or accuracy_report.get('stats', {}).get('avg_processing_time', 0)
-    
+
     stats = {
-        'total_documents': len(document_store),
-        'clusters_created': len(cluster_data.get('clusters', {})),
-        'parsing_accuracy': accuracy_report['accuracy'],
-        'avg_processing_time': avg_time,
-        'silhouette_score': cluster_data.get('silhouette_score', 0),
-        'formats': {}
+        "total_documents": len(document_store),
+        "clusters_created": len(cluster_data.get("clusters", {})),
+        "parsing_accuracy": accuracy_report["accuracy"],
+        "avg_processing_time": accuracy_report["avg_time_per_doc"],
+        "silhouette_score": cluster_data.get("silhouette_score", 0),
+        "formats": {},
     }
-    
-    # Count document formats
+
     for doc in document_store:
-        fmt = doc['format']
-        stats['formats'][fmt] = stats['formats'].get(fmt, 0) + 1
-    
+        fmt = doc["format"]
+        stats["formats"][fmt] = stats["formats"].get(fmt, 0) + 1
+
     return jsonify(stats)
 
-if __name__ == '__main__':
-    # Create necessary directories
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    os.makedirs('data/processed', exist_ok=True)
-    
+# -------------------------------------------------------------------
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
