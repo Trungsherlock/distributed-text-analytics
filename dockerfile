@@ -1,6 +1,6 @@
 # Dockerfile
 
-FROM python:3.9-slim
+FROM python:3.11.14-slim
 
 # Install Java for Spark
 RUN apt-get update && \
@@ -25,7 +25,7 @@ COPY data/ ./data/
 
 # Set environment variables
 ENV JAVA_HOME=/usr/lib/jvm/default-java
-ENV SPARK_HOME=/usr/local/lib/python3.9/site-packages/pyspark
+ENV SPARK_HOME=/usr/local/lib/python3.11/site-packages/pyspark
 ENV PYTHONPATH=/app
 
 # Expose port

@@ -18,7 +18,7 @@ The datasets used in this project are available from Kaggle:
 3. [Dataset of PDF Files](https://www.kaggle.com/datasets/manisha717/dataset-of-pdf-files) (sample 500 docs)
 4. [Regulations PDF](https://www.kaggle.com/datasets/terryeppler/regulations-pdf) (sample 100 docs)
 
-Download these datasets and place them in the `downloads/` folder, then run:
+Download these datasets and place them in the `raw/` folder, then run:
 ```bash
-python scripts/prepare_data.py
+python -m src.main
 ```

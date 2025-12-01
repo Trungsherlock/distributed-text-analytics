@@ -18,7 +18,7 @@ services:
       - doc-analytics
 
   spark-master:
-    image: bitnami/spark:3.4
+    image: apache/spark:4.1.0-preview3
     environment:
       - SPARK_MODE=master
       - SPARK_MASTER_PORT=7077
@@ -30,7 +30,7 @@ services:
       - doc-analytics
 
   spark-worker:
-    image: bitnami/spark:3.4
+    image: apache/spark:4.1.0-preview3
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077

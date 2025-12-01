@@ -1,7 +1,26 @@
 import re
+import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
+
+
+def _ensure_nltk_resources():
+    """Download required NLTK resources if they are missing."""
+    resources = {
+        "punkt": "tokenizers/punkt",
+        "punkt_tab": "tokenizers/punkt_tab",
+        "stopwords": "corpora/stopwords",
+        "wordnet": "corpora/wordnet",
+    }
+    for package, path in resources.items():
+        try:
+            nltk.data.find(path)
+        except LookupError:
+            nltk.download(package, quiet=True)
+
+
+_ensure_nltk_resources()
 
 lemmatizer = WordNetLemmatizer()
 stops = set(stopwords.words("english"))
