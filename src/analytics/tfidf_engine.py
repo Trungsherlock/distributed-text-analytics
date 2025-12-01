@@ -1,107 +1,87 @@
 # src/analytics/tfidf_engine.py
 
-from pyspark.sql import SparkSession
-from pyspark.ml.feature import HashingTF, IDF, Tokenizer
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+import time
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict
+
+from pyspark.sql import SparkSession
+from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+
 
 class SparkTFIDFEngine:
     """
-    Distributed TF-IDF computation using Spark MLlib
+    Full Windows-safe TF-IDF:
+    - Tokenizer (Spark)
+    - Stopwords remover (Spark)
+    - HashingTF (Spark JVM)
+    - Compute IDF in NumPy (no Python workers)
     """
-    
-    def __init__(self, num_features=10000):
-        """
-        Initialize Spark session and TF-IDF parameters
-        
-        Args:
-            num_features: Number of features for hashing
-        """
-        self.spark = SparkSession.builder \
-            .appName("DocumentTFIDF") \
-            .config("spark.driver.memory", "4g") \
-            .config("spark.executor.memory", "4g") \
-            .getOrCreate()
-        
+
+    def __init__(self, num_features: int = 5000):
         self.num_features = num_features
-        self.hashing_tf = None
-        self.idf_model = None
-        self.vocabulary = None
-    
-    def compute_tfidf(self, documents: List[Dict[str, str]]) -> np.ndarray:
-        """
-        Compute TF-IDF vectors for documents
-        
-        Args:
-            documents: List of dictionaries with 'id' and 'text' keys
-            
-        Returns:
-            TF-IDF matrix as numpy array
-        """
-        # Create DataFrame
+
+        self.spark = (
+            SparkSession.builder
+            .appName("TFIDFEngine")
+            .master("local[*]")
+            .config("spark.driver.memory", "4g")
+            .config("spark.executor.memory", "4g")
+            .config("spark.python.worker.reuse", "false")
+            .getOrCreate()
+        )
+
+
+    def compute_tfidf(self, documents: List[Dict[str, str]]):
+
+        start = time.time()
+        N = len(documents)
+
         schema = StructType([
             StructField("id", IntegerType(), True),
             StructField("text", StringType(), True)
         ])
-        
+
         df = self.spark.createDataFrame(
-            [(doc['id'], doc['text']) for doc in documents],
+            [(d["id"], d["text"]) for d in documents],
             schema=schema
         )
-        
-        # Tokenization
+
         tokenizer = Tokenizer(inputCol="text", outputCol="words")
-        words_df = tokenizer.transform(df)
-        
-        # Compute TF
-        self.hashing_tf = HashingTF(
-            inputCol="words", 
-            outputCol="raw_features",
+        df = tokenizer.transform(df)
+
+        remover = StopWordsRemover(inputCol="words", outputCol="filtered_words")
+        df = remover.transform(df)
+
+        hashing = HashingTF(
+            inputCol="filtered_words",
+            outputCol="tf",
             numFeatures=self.num_features
         )
-        tf_df = self.hashing_tf.transform(words_df)
-        
-        # Compute IDF
-        idf = IDF(inputCol="raw_features", outputCol="features")
-        self.idf_model = idf.fit(tf_df)
-        tfidf_df = self.idf_model.transform(tf_df)
-        
-        # Convert to numpy array
-        tfidf_vectors = tfidf_df.select("features").collect()
-        tfidf_matrix = np.array([
-            vec["features"].toArray() for vec in tfidf_vectors
-        ])
-        
-        return tfidf_matrix
-    
-    def get_top_terms_per_document(
-        self, 
-        tfidf_matrix: np.ndarray, 
-        vocab: List[str], 
-        top_k: int = 10
-    ) -> List[List[Tuple[str, float]]]:
-        """
-        Extract top k terms for each document based on TF-IDF scores
-        """
-        top_terms_per_doc = []
-        
-        for doc_vector in tfidf_matrix:
-            # Get indices of top k values
-            top_indices = np.argsort(doc_vector)[-top_k:][::-1]
-            
-            # Get terms and scores
-            top_terms = [
-                (vocab[idx] if idx < len(vocab) else f"term_{idx}", 
-                 doc_vector[idx])
-                for idx in top_indices if doc_vector[idx] > 0
-            ]
-            
-            top_terms_per_doc.append(top_terms)
-        
-        return top_terms_per_doc
-    
+        df = hashing.transform(df)
+
+        # Collect TF vectors (JVM -> Python), no Python worker inside Spark
+        tf_vectors = df.select("tf").collect()
+        tf = np.array([row["tf"].toArray() for row in tf_vectors])
+
+        # Compute IDF manually in NumPy
+        dfreq = np.count_nonzero(tf > 0, axis=0)
+        idf = np.log((1 + N) / (1 + dfreq)) + 1
+
+        tfidf = tf * idf
+
+        metrics = {
+            "num_documents": N,
+            "num_features": self.num_features,
+            "matrix_shape": tfidf.shape,
+            "total_time_sec": round(time.time() - start, 4),
+            "time_per_doc_sec": round((time.time() - start) / (N or 1), 4)
+        }
+
+        return tfidf, None, metrics
+
     def close(self):
-        """Close Spark session"""
-        if self.spark:
+        try:
             self.spark.stop()
+        except:
+            pass
