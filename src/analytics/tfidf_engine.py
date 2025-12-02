@@ -4,17 +4,18 @@ import time
 import numpy as np
 from typing import List, Dict
 from pyspark.sql import SparkSession
-from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from pyspark.ml.feature import HashingTF, IDF
+from pyspark.sql.types import StructType, StructField, IntegerType, ArrayType, StringType
 import logging
+import re
 
 
 class SparkTFIDFEngine:
     """
-    Stable TF-IDF computation using Spark HashingTF + IDF.
-    - No Python worker crashes on Windows
-    - Fixed-size vector
-    - Fast + scalable
+    Windows-compatible TF-IDF using PySpark with pre-tokenization.
+    - Tokenize in Python (no Python worker for this step)
+    - Use only JVM-based Spark operations (HashingTF, IDF)
+    - Avoids Python worker crashes on Windows
     """
 
     def __init__(self, num_features: int = 5000):
@@ -23,11 +24,12 @@ class SparkTFIDFEngine:
             .appName("TFIDFEngine")
             .master("local[*]")
             .config("spark.submit.deployMode", "client")
-            .config("spark.driver.memory", "4g")
-            .config("spark.executor.memory", "4g")
-            .config("spark.python.worker.reuse", "false")
-            .config("spark.sql.execution.pyspark.udf.faulthandler.enabled", "true")
-            .config("spark.python.worker.faulthandler.enabled", "true")
+            .config("spark.driver.memory", "2g")
+            .config("spark.executor.memory", "2g")
+            .config("spark.driver.extraJavaOptions", "-Djava.security.manager=allow")
+            .config("spark.executor.extraJavaOptions", "-Djava.security.manager=allow")
+            .config("spark.sql.shuffle.partitions", "10")
+            .config("spark.default.parallelism", "4")
             .getOrCreate()
         )
 
@@ -35,68 +37,103 @@ class SparkTFIDFEngine:
         self.idf_model = None
         self.log = logging.getLogger("analytics")
 
+        # Common English stop words
+        self.stop_words = set([
+            'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+            'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+            'to', 'was', 'will', 'with', 'the', 'this', 'but', 'they', 'have',
+            'had', 'what', 'when', 'where', 'who', 'which', 'why', 'how'
+        ])
+
+    # --------------------------------------------------------------
+
+    def _tokenize_text(self, text: str) -> List[str]:
+        """
+        Tokenize and clean text in Python (avoiding Spark Python workers).
+        """
+        # Convert to lowercase
+        text = text.lower()
+
+        # Split on non-alphanumeric characters
+        tokens = re.findall(r'\b[a-z]+\b', text)
+
+        # Remove stop words and short tokens
+        tokens = [t for t in tokens if t not in self.stop_words and len(t) > 2]
+
+        return tokens
+
     # --------------------------------------------------------------
 
     def compute_tfidf(self, documents: List[Dict[str, str]]):
         """
-        Compute TF-IDF matrix using HashingTF.
+        Compute TF-IDF matrix using PySpark HashingTF + IDF.
+        Pre-tokenizes in Python to avoid Python worker issues.
         Returns: tfidf_matrix, vocabulary(None), metrics
         """
 
         start_time = time.time()
-        num_docs = len(documents)
 
-        # Spark DataFrame schema
+        # Filter out empty documents
+        valid_docs = [doc for doc in documents if doc.get("text") and doc["text"].strip()]
+        num_docs = len(valid_docs)
+
+        if num_docs == 0:
+            raise ValueError("No valid documents found (all documents are empty)")
+
+        if num_docs < len(documents):
+            print(f"Filtered out {len(documents) - num_docs} empty documents")
+            self.log.warning(f"Filtered out {len(documents) - num_docs} empty documents")
+
+        # Pre-tokenize in Python (avoids Spark Python workers)
+        print("   Tokenizing documents...")
+        tokenized_docs = []
+        for doc in valid_docs:
+            tokens = self._tokenize_text(doc["text"])
+            if tokens:  # Only include docs with tokens
+                tokenized_docs.append((doc["id"], tokens))
+
+        if not tokenized_docs:
+            raise ValueError("No documents with valid tokens after preprocessing")
+
+        # Create Spark DataFrame with pre-tokenized data
         schema = StructType([
             StructField("id", IntegerType(), True),
-            StructField("text", StringType(), True)
+            StructField("tokens", ArrayType(StringType()), True)
         ])
 
-        df = self.spark.createDataFrame(
-            [(doc["id"], doc["text"]) for doc in documents],
-            schema=schema
-        )
+        df = self.spark.createDataFrame(tokenized_docs, schema=schema)
 
-        # Tokenize
-        tokenizer = Tokenizer(inputCol="text", outputCol="words")
-        df = tokenizer.transform(df)
-
-        # Stopword removal
-        remover = StopWordsRemover(
-            inputCol="words",
-            outputCol="filtered_words"
-        )
-        df = remover.transform(df)
-
-        # HashingTF → fast, stable, JVM-only
+        # HashingTF → JVM-only operation
+        print("   Computing TF-IDF features...")
         hashing_tf = HashingTF(
-            inputCol="filtered_words",
+            inputCol="tokens",
             outputCol="raw_features",
             numFeatures=self.num_features
         )
         df = hashing_tf.transform(df)
 
-        # IDF
+        # IDF → JVM-only operation
         idf = IDF(inputCol="raw_features", outputCol="features")
         self.idf_model = idf.fit(df)
         df = self.idf_model.transform(df)
 
-        # Convert to numpy
+        # Collect results
+        print("   Converting to matrix...")
         vectors = df.select("features").collect()
         tfidf_matrix = np.array([row["features"].toArray() for row in vectors])
 
         total_time = time.time() - start_time
 
         metrics = {
-            "num_documents": num_docs,
+            "num_documents": len(tokenized_docs),
             "num_features": self.num_features,
-            "matrix_shape": tfidf_matrix.shape,
+            "matrix_shape": list(tfidf_matrix.shape),
             "total_time_sec": round(total_time, 4),
-            "time_per_doc_sec": round(total_time / max(1, num_docs), 4),
+            "time_per_doc_sec": round(total_time / max(1, len(tokenized_docs)), 4),
         }
 
         self.log.info(
-            f"[TF-IDF] docs={num_docs} | features={self.num_features} | "
+            f"[TF-IDF] docs={len(tokenized_docs)} | features={self.num_features} | "
             f"shape={tfidf_matrix.shape} | time={total_time:.4f}s"
         )
 

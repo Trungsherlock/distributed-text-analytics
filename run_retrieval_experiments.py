@@ -85,7 +85,7 @@ def initialize_retrieval_systems(documents: List, cluster_data: dict, tfidf_matr
 
     # Initialize vector store
     print("  - Creating FAISS vector store...")
-    vector_store = VectorStore(store_type='faiss')
+    vector_store = VectorStore()
 
     # Generate document embeddings
     print("  - Generating document embeddings...")
