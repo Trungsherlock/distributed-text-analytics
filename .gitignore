@@ -6,6 +6,7 @@ data/processed/
 data/embeddings/
 data/temp/
 data/cleaned/
+data/cleaned/corpus.jsonl
 *.pdf
 *.docx
 *.csv
