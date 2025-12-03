@@ -32,8 +32,11 @@ class SparkKMeansClustering:
         # Configure Spark with specific worker count for performance testing
         builder = SparkSession.builder \
             .appName("KMeansClustering") \
-            .config("spark.driver.memory", "4g") \
-            .config("spark.executor.memory", "2g")
+            .config("spark.driver.memory", "1g") \
+            .config("spark.executor.memory", "1g") \
+            .config("spark.rpc.message.maxSize", "128") \
+            .config("spark.driver.maxResultSize", "512m") \
+            .config("spark.kryoserializer.buffer.max", "512m")
         
         if num_workers:
             builder = builder \
@@ -41,6 +44,10 @@ class SparkKMeansClustering:
                 .config("spark.default.parallelism", str(num_workers * 2))
         
         self.spark = builder.getOrCreate()
+
+        # Reduce logging noise
+        self.spark.sparkContext.setLogLevel("ERROR")
+
         self.num_workers = num_workers or self.spark.sparkContext.defaultParallelism
         
         self.model = None
@@ -70,10 +77,16 @@ class SparkKMeansClustering:
         
         array_to_vector_udf = udf(array_to_vector, VectorUDT())
         
-        # Create DataFrame with features
+        # Create DataFrame with features and partition immediately
+        # Convert to list of tuples first, then create RDD with explicit partitioning
+        num_docs = len(tfidf_matrix)
+        target_partitions = max(50, num_docs // 100)  # At least 50 partitions or 100 docs per partition
+
+        # Create RDD with explicit partitioning to avoid large tasks
         data = [(Vectors.dense(row.tolist()),) for row in tfidf_matrix]
-        df = self.spark.createDataFrame(data, ["features"])
-        
+        rdd = self.spark.sparkContext.parallelize(data, target_partitions)
+        df = self.spark.createDataFrame(rdd, ["features"])
+
         # Track partitioning
         num_partitions = df.rdd.getNumPartitions()
         

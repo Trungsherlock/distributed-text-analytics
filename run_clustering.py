@@ -76,7 +76,7 @@ def run_clustering(
 
     clustering_engine = SparkKMeansClustering(
         n_clusters=min(n_clusters, len(documents)),
-        max_iter=100,
+        max_iter=20,
         seed=42,
         num_workers=num_workers
     )
