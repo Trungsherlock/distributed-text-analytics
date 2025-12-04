@@ -1,5 +1,3 @@
-# src/embedding/embedding_engine.py
-
 import numpy as np
 from typing import List, Dict, Optional, Callable
 import threading
@@ -11,18 +9,11 @@ import logging
 
 class BackgroundEmbeddingEngine:
     """
-    Asynchronous embedding generation engine
-
-    This engine runs in the background and doesn't block the main system.
-    The system can work with TF-IDF-based retrieval while embeddings are being
-    generated asynchronously, then switch to embedding-based retrieval once ready.
+    Asynchronous embedding generation engine that runs in the background, working with
+    TF-IDF-based retrieval while embeddings are being generated asynchronously, then
+    switch to embedding-based retrieval once ready.
     """
-
-    def __init__(
-        self,
-        model_name: str = 'sentence-transformers/all-MiniLM-L6-v2',
-        batch_size: int = 32
-    ):
+    def __init__(self, model_name: str = 'sentence-transformers/all-MiniLM-L6-v2', batch_size: int = 32):
         """
         Initialize embedding engine
 

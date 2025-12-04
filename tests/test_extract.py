@@ -1,5 +1,6 @@
-from src.ingest.extract_pdf import extract_any
+from src.ingestion.parser import DocumentParser
 
-path = "data/raw/sample.txt"
-text = extract_any(path)
-print("Extracted text:\n", text[:400])
+path = "data/raw/resume/10001727.pdf"
+parser = DocumentParser()
+text = parser.parse_document(path)
+print(text)
