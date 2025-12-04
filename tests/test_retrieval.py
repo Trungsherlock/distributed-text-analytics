@@ -1,14 +1,6 @@
-#!/usr/bin/env python3
-# tests/test_retrieval.py
-
-"""
-Unit tests for Stage 5: Query & Retrieval
-"""
-
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 import unittest
 import numpy as np
 from retrieval.query import QueryEmbedder
@@ -17,13 +9,10 @@ from embedding.vector_store import VectorStore
 
 
 class TestQueryEmbedder(unittest.TestCase):
-    """Test query embedding"""
-
     def setUp(self):
         self.embedder = QueryEmbedder()
 
     def test_embed_single_query(self):
-        """Test embedding a single query"""
         query = "test query"
         embedding, time = self.embedder.embed_query(query)
 
@@ -33,7 +22,6 @@ class TestQueryEmbedder(unittest.TestCase):
         self.assertGreater(time, 0)  # Should take some time
 
     def test_embed_batch_queries(self):
-        """Test embedding multiple queries"""
         queries = ["query 1", "query 2", "query 3"]
         embeddings, time = self.embedder.embed_queries_batch(queries)
 
@@ -42,21 +30,16 @@ class TestQueryEmbedder(unittest.TestCase):
         self.assertGreater(time, 0)
 
     def test_embedding_consistency(self):
-        """Test that same query produces similar embeddings"""
         query = "machine learning"
         emb1, _ = self.embedder.embed_query(query)
         emb2, _ = self.embedder.embed_query(query)
 
-        # Should be very close (cosine similarity near 1.0)
         similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
         self.assertGreater(similarity, 0.99)
 
 
 class TestRetrieval(unittest.TestCase):
-    """Test retrieval systems"""
-
     def setUp(self):
-        """Create mock data for testing"""
         # Create mock documents with embeddings
         np.random.seed(42)
         n_docs = 100
@@ -76,7 +59,7 @@ class TestRetrieval(unittest.TestCase):
             self.cluster_assignments[i] = cluster_id
 
         # Create vector store
-        self.vector_store = VectorStore(store_type='faiss')
+        self.vector_store = VectorStore()
         self.vector_store.add_embeddings(self.embeddings, self.cluster_assignments)
 
         # Create retrieval systems
@@ -92,7 +75,6 @@ class TestRetrieval(unittest.TestCase):
         )
 
     def test_cluster_aware_search(self):
-        """Test cluster-aware retrieval"""
         # Query similar to cluster 0 centroid
         query_embedding = self.cluster_centroids[0] + np.random.randn(384) * 0.05
 
@@ -116,7 +98,6 @@ class TestRetrieval(unittest.TestCase):
         self.assertGreater(result['timing']['total_latency_ms'], 0)
 
     def test_flat_search(self):
-        """Test flat retrieval"""
         query_embedding = self.cluster_centroids[0]
 
         result = self.flat.search(query_embedding, k=5)
@@ -132,7 +113,6 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(result['timing']['documents_searched'], 100)
 
     def test_cluster_aware_searches_fewer_docs(self):
-        """Test that cluster-aware searches fewer documents"""
         query_embedding = self.cluster_centroids[0]
 
         cluster_result = self.cluster_aware.search(query_embedding, k=5)
@@ -146,7 +126,6 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(flat_docs, 100)
 
     def test_retrieval_comparator(self):
-        """Test retrieval comparator"""
         comparator = RetrievalComparator(self.cluster_aware, self.flat)
 
         query_embedding = self.cluster_centroids[0]
@@ -170,11 +149,8 @@ class TestRetrieval(unittest.TestCase):
 
 
 class TestVectorStore(unittest.TestCase):
-    """Test vector store functionality"""
-
     def test_faiss_index_creation(self):
-        """Test FAISS index creation"""
-        vector_store = VectorStore(store_type='faiss')
+        vector_store = VectorStore()
 
         # Add embeddings
         embeddings = {
@@ -191,8 +167,7 @@ class TestVectorStore(unittest.TestCase):
         self.assertIn(1, vector_store.indices)
 
     def test_faiss_search_within_cluster(self):
-        """Test searching within a specific cluster"""
-        vector_store = VectorStore(store_type='faiss')
+        vector_store = VectorStore()
 
         # Create distinct embeddings for two clusters
         cluster_0_embedding = np.ones(384)
@@ -220,7 +195,6 @@ class TestVectorStore(unittest.TestCase):
 
 
 def run_tests():
-    """Run all tests"""
     unittest.main(argv=[''], verbosity=2, exit=False)
 
 

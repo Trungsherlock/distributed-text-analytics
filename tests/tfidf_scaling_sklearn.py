@@ -1,5 +1,3 @@
-# tests/tfidf_scaling_sklearn.py
-
 import time
 import json
 import os

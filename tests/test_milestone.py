@@ -1,5 +1,3 @@
-# test_milestone.py
-
 import os
 import time
 import requests
@@ -7,10 +5,6 @@ import json
 from pathlib import Path
 
 def test_milestone_goals():
-    """
-    Test all milestone requirements
-    """
-    
     base_url = "http://localhost:5000"
     results = {
         "document_parsing": False,
@@ -23,13 +17,7 @@ def test_milestone_goals():
         "vector_db": False
     }
     
-    print("=" * 50)
-    print("MILESTONE TESTING - CS532 Project")
-    print("=" * 50)
-    
     # Test 1: Document Upload and Parsing
-    print("\n1. Testing Document Upload (500 documents)...")
-    
     # Create test documents if needed
     test_docs_dir = Path("test_documents")
     if not test_docs_dir.exists():
