@@ -279,15 +279,15 @@ class RetrievalVisualizer:
         self.plot_speedup_chart(results_df)
         self.plot_search_space_reduction(results_df)
 
-        # Calculate average latency breakdown for breakdown plot
+        # Calculate average latency breakdown for breakdown plot using actual measured values
         avg_cluster_aware = {
             'embedding': results_df['embedding_time_ms'].mean(),
-            'cluster_selection': 2.0,  # Approximate
-            'search': results_df['cluster_aware_latency_ms'].mean() - results_df['embedding_time_ms'].mean() - 2.0
+            'cluster_selection': results_df['cluster_selection_ms'].mean() if 'cluster_selection_ms' in results_df.columns else 0,
+            'search': results_df['cluster_faiss_search_ms'].mean() if 'cluster_faiss_search_ms' in results_df.columns else results_df['cluster_aware_latency_ms'].mean() - results_df['embedding_time_ms'].mean()
         }
         avg_flat = {
             'embedding': results_df['embedding_time_ms'].mean(),
-            'search': results_df['flat_latency_ms'].mean() - results_df['embedding_time_ms'].mean()
+            'search': results_df['flat_faiss_search_ms'].mean() if 'flat_faiss_search_ms' in results_df.columns else results_df['flat_latency_ms'].mean() - results_df['embedding_time_ms'].mean()
         }
         self.plot_latency_breakdown(avg_cluster_aware, avg_flat)
 

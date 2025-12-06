@@ -57,6 +57,9 @@ class RetrievalEvaluator:
         cluster_times = []
         flat_times = []
         embedding_times = []
+        cluster_selection_times = []
+        cluster_faiss_times = []
+        flat_faiss_times = []
 
         cluster_results_list = []
         flat_results_list = []
@@ -69,17 +72,23 @@ class RetrievalEvaluator:
             # Cluster-aware search
             cluster_result = self.cluster_aware.search(query_embedding, k)
             cluster_times.append(cluster_result['timing']['total_latency_ms'])
+            cluster_selection_times.append(cluster_result['timing'].get('cluster_selection_ms', 0))
+            cluster_faiss_times.append(cluster_result['timing'].get('faiss_search_ms', 0))
             cluster_results_list.append(cluster_result)
 
             # Flat search
             flat_result = self.flat.search(query_embedding, k)
             flat_times.append(flat_result['timing']['total_latency_ms'])
+            flat_faiss_times.append(flat_result['timing'].get('faiss_search_ms', 0))
             flat_results_list.append(flat_result)
 
         # Calculate averages
         avg_cluster_time = np.mean(cluster_times)
         avg_flat_time = np.mean(flat_times)
         avg_embedding_time = np.mean(embedding_times)
+        avg_cluster_selection_time = np.mean(cluster_selection_times)
+        avg_cluster_faiss_time = np.mean(cluster_faiss_times)
+        avg_flat_faiss_time = np.mean(flat_faiss_times)
 
         speedup = avg_flat_time / avg_cluster_time if avg_cluster_time > 0 else 0
 
@@ -101,6 +110,8 @@ class RetrievalEvaluator:
                 'avg_embedding_time_ms': round(avg_embedding_time, 2),
                 'cluster_aware': {
                     'avg_total_latency_ms': round(avg_cluster_time, 2),
+                    'avg_cluster_selection_ms': round(avg_cluster_selection_time, 2),
+                    'avg_faiss_search_ms': round(avg_cluster_faiss_time, 2),
                     'std_latency_ms': round(np.std(cluster_times), 2),
                     'min_latency_ms': round(np.min(cluster_times), 2),
                     'max_latency_ms': round(np.max(cluster_times), 2),
@@ -108,6 +119,7 @@ class RetrievalEvaluator:
                 },
                 'flat': {
                     'avg_total_latency_ms': round(avg_flat_time, 2),
+                    'avg_faiss_search_ms': round(avg_flat_faiss_time, 2),
                     'std_latency_ms': round(np.std(flat_times), 2),
                     'min_latency_ms': round(np.min(flat_times), 2),
                     'max_latency_ms': round(np.max(flat_times), 2),
@@ -179,8 +191,11 @@ class RetrievalEvaluator:
                 'num_runs': result['num_runs'],
                 'embedding_time_ms': result['metrics']['avg_embedding_time_ms'],
                 'cluster_aware_latency_ms': result['metrics']['cluster_aware']['avg_total_latency_ms'],
+                'cluster_selection_ms': result['metrics']['cluster_aware']['avg_cluster_selection_ms'],
+                'cluster_faiss_search_ms': result['metrics']['cluster_aware']['avg_faiss_search_ms'],
                 'cluster_aware_docs_searched': result['metrics']['cluster_aware']['documents_searched'],
                 'flat_latency_ms': result['metrics']['flat']['avg_total_latency_ms'],
+                'flat_faiss_search_ms': result['metrics']['flat']['avg_faiss_search_ms'],
                 'flat_docs_searched': result['metrics']['flat']['documents_searched'],
                 'speedup': result['metrics']['comparison']['speedup'],
                 'latency_diff_ms': result['metrics']['comparison']['latency_difference_ms'],

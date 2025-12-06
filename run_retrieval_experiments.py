@@ -26,16 +26,44 @@ from embedding.embedding_engine import BackgroundEmbeddingEngine
 
 
 DEFAULT_TEST_QUERIES = [
-    "machine learning algorithms and neural networks",
-    "data processing and analytics pipelines",
-    "distributed computing systems",
-    "natural language processing techniques",
-    "information retrieval and search",
-    "text mining and document analysis",
-    "clustering and classification methods",
-    "performance optimization strategies",
-    "database management systems",
-    "software development best practices"
+    # HR & Talent (2)
+    "talent acquisition specialist skilled in recruiting, interview scheduling, and offer negotiation for tech companies",
+    # Banking & Finance (2)
+    "digital payment systems architect with expertise in mobile wallets, online payment gateways, and transaction security",
+    "financial analyst conducting portfolio analysis, investment risk scenarios, and quarterly reporting for institutional funds",
+    # Healthcare (2)
+    "medical administrator managing clinic operations, patient record systems, insurance claim processing, and compliance",
+    "patient care coordinator overseeing multi-specialty appointments, insurance verification, and aftercare planning",
+    # Art & Culture (2)
+    "museum curator specializing in contemporary art exhibitions, artist liaison, and grant proposal writing",
+    "digital art platform product manager responsible for user experience design, artist onboarding, and feature roadmapping",
+    # Automotive (2)
+    "automotive engineer developing electric powertrain systems, battery technologies, and vehicle safety features",
+    "car designer skilled in CAD modeling, concept visualization, and aerodynamic optimization",
+    # Food & Hospitality (2)
+    "executive chef expert in French and Mediterranean cuisine, seasonal menu planning, and kitchen team leadership",
+    "restaurant manager specializing in FOH operations, inventory control, and staff training programs",
+    # Fitness & Wellness (2)
+    "fitness coach creating custom training regimens, tracking client progress, and providing motivational support",
+    "wellness program coordinator responsible for employee health screenings, mental wellness seminars, and activity challenges",
+    # Sales & Marketing (2)
+    "B2B technology sales executive using CRM tools for pipeline management, contract negotiation, and strategic account growth",
+    "B2C product marketer specializing in lead generation campaigns, customer engagement, and social media analytics",
+    # Software Engineering (2)
+    "software engineer developing RESTful APIs, microservices architectures, and integration pipelines in Python and Go",
+    "backend developer with experience in database design, distributed caching, and system scalability enhancements",
+    # Cybersecurity (2)
+    "cybersecurity analyst investigating intrusion attempts, configuring firewalls, and incident response planning",
+    "cloud security architect designing IAM policies, encryption protocols, and continuous security monitoring solutions",
+    # Environment (2)
+    "environmental scientist modeling climate change impacts, conducting field sampling, and publishing peer-reviewed studies",
+    "sustainability consultant advising clients on carbon reduction strategies, green certifications, and regulatory compliance",
+    # Business & Analytics (2)
+    "business process analyst streamlining workflow automation, requirements gathering, and system documentation",
+    "data analytics lead developing BI dashboards, data pipelines, and predictive models for retail chains",
+    # Logistics & Supply Chain (2)
+    "logistics coordinator managing freight forwarding, customs documentation, and last-mile delivery optimization",
+    "supply chain analyst monitoring inventory turnover rates, demand forecasting, and vendor rating systems",
 ]
 
 

@@ -3,7 +3,7 @@
 import numpy as np
 from typing import Optional, Dict, List, Tuple
 import time
-from sklearn.metrics.pairwise import cosine_similarity
+import faiss
 
 
 class ClusterAwareRetrieval:
@@ -30,26 +30,51 @@ class ClusterAwareRetrieval:
         self.vector_store = vector_store
         self.cluster_assignments = cluster_assignments
         self.n_clusters = len(cluster_centroids)
+        
+        # Build FAISS index for fast centroid search
+        self.centroid_index = self._build_centroid_index(cluster_centroids)
 
-    def find_relevant_cluster(self, query_embedding: np.ndarray) -> Tuple[int, float]:
+    def _build_centroid_index(self, centroids: np.ndarray) -> faiss.IndexFlatIP:
         """
-        Find the cluster most similar to the query
+        Build FAISS index for cluster centroids using Inner Product (cosine similarity)
+        
+        Args:
+            centroids: Cluster centroid vectors (n_clusters x embedding_dim)
+            
+        Returns:
+            FAISS IndexFlatIP for fast similarity search
+        """
+        # Normalize centroids for cosine similarity via inner product
+        norms = np.linalg.norm(centroids, axis=1, keepdims=True)
+        centroids_normalized = (centroids / norms).astype('float32')
+        
+        # Create FAISS index with inner product
+        index = faiss.IndexFlatIP(centroids.shape[1])
+        index.add(centroids_normalized)
+        
+        return index
+
+    def find_relevant_cluster(self, query_embedding: np.ndarray) -> Tuple[int, float, float]:
+        """
+        Find the cluster most similar to the query using FAISS
 
         Args:
             query_embedding: Query embedding vector
 
         Returns:
-            Tuple of (cluster_id, similarity_score)
+            Tuple of (cluster_id, similarity_score, selection_time)
         """
         start_time = time.time()
 
-        # Calculate cosine similarity between query and all centroids
-        query_reshaped = query_embedding.reshape(1, -1)
-        similarities = cosine_similarity(query_reshaped, self.cluster_centroids)[0]
+        # Normalize query for cosine similarity via inner product
+        query_norm = query_embedding / np.linalg.norm(query_embedding)
+        query_norm = query_norm.reshape(1, -1).astype('float32')
 
-        # Find cluster with highest similarity
-        best_cluster_id = int(np.argmax(similarities))
-        best_similarity = float(similarities[best_cluster_id])
+        # FAISS search for nearest centroid (k=1)
+        similarities, indices = self.centroid_index.search(query_norm, 1)
+
+        best_cluster_id = int(indices[0][0])
+        best_similarity = float(similarities[0][0])
 
         cluster_selection_time = time.time() - start_time
 
